@@ -64,7 +64,7 @@ pub async fn process(
             let (headers, body) = http::fastcgi::parse_fastcgi_response(stdout);
 
             let http_response = format!(
-                "HTTP/1.1 200 OK\r\n{}\r\nContent-Length: {}\r\n\r\n{}",
+                "HTTP/1.1 200 OK\r\n{}\r\nContent-Length: {}\r\nX-Jacked: Everything is worth it if the soul is not small.\r\n\r\n{}",
                 headers,
                 body.len(),
                 body
