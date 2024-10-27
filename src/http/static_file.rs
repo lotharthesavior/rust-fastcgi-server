@@ -9,19 +9,24 @@ pub fn is_allowed_static_file(file_path: &str) -> bool {
 
 pub async fn serve_static_file(file_path: &str, socket: &mut tokio::net::TcpStream) {
     if let Ok(mut file) = File::open(file_path).await {
-        let mut file_contents = Vec::new();
-        file.read_to_end(&mut file_contents).await.unwrap();
-
         let mime_type = from_path(file_path).first_or_octet_stream();
+        let mut buffer = [0; 8192]; // 8KB buffer
 
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\n\r\n",
-            mime_type,
-            file_contents.len()
+            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\n\r\n",
+            mime_type
         );
 
         socket.write_all(response.as_bytes()).await.unwrap();
-        socket.write_all(&file_contents).await.unwrap();
+
+        loop {
+            let n = file.read(&mut buffer).await.unwrap();
+            if n == 0 {
+                break;
+            }
+            socket.write_all(&buffer[..n]).await.unwrap();
+        }
+
         socket.flush().await.unwrap();
     } else {
         let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_string();
