@@ -8,34 +8,59 @@ pub fn is_allowed_static_file(file_path: &str) -> bool {
 }
 
 pub async fn serve_static_file(file_path: &str, socket: &mut tokio::net::TcpStream) {
-    if let Ok(..) = File::open(file_path).await {
-        let mut file = File::open(file_path).await.unwrap();
-        let mime_type = from_path(file_path).first_or_octet_stream();
-
-        let metadata = file.metadata().await.unwrap();
-        let content_length = metadata.len();
-
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            mime_type, content_length
-        );
-
-        socket.write_all(response.as_bytes()).await.unwrap();
-
-        let mut buffer = [0; 8192];
-        loop {
-            let n = file.read(&mut buffer).await.unwrap();
-            if n == 0 {
-                break;
+    let file = match File::open(file_path).await {
+        Ok(f) => f,
+        Err(_) => {
+            let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+            if let Err(e) = socket.write_all(response.as_bytes()).await {
+                eprintln!("Failed to send 404 response: {:?}", e);
             }
-            socket.write_all(&buffer[..n]).await.unwrap();
+            return;
         }
+    };
 
-        socket.flush().await.unwrap();
-    } else {
-        let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_string();
-        socket.write_all(response.as_bytes()).await.unwrap();
+    let mime_type = from_path(file_path).first_or_octet_stream();
+    let content_length = match file.metadata().await {
+        Ok(metadata) => metadata.len(),
+        Err(_) => {
+            eprintln!("Failed to read file metadata.");
+            return;
+        }
+    };
+
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        mime_type, content_length
+    );
+
+    if socket.write_all(response.as_bytes()).await.is_err() {
+        eprintln!("Failed to send response headers.");
+        return;
     }
+
+    let mut buffer = [0; 8192];
+    let mut file = file;
+    loop {
+        let n = match file.read(&mut buffer).await {
+            Ok(0) => break, // EOF reached
+            Ok(n) => n,
+            Err(e) => {
+                eprintln!("Error reading file: {:?}", e);
+                return;
+            }
+        };
+
+        if socket.write_all(&buffer[..n]).await.is_err() {
+            eprintln!("Failed to send file content.");
+            return;
+        }
+    }
+
+    if socket.flush().await.is_err() {
+        eprintln!("Failed to flush socket.");
+    }
+
+    let _ = socket.shutdown().await;
 }
 
 #[cfg(test)]
