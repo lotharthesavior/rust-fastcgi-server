@@ -8,17 +8,21 @@ pub fn is_allowed_static_file(file_path: &str) -> bool {
 }
 
 pub async fn serve_static_file(file_path: &str, socket: &mut tokio::net::TcpStream) {
-    if let Ok(mut file) = File::open(file_path).await {
+    if let Ok(..) = File::open(file_path).await {
+        let mut file = File::open(file_path).await.unwrap();
         let mime_type = from_path(file_path).first_or_octet_stream();
-        let mut buffer = [0; 8192]; // 8KB buffer
+
+        let metadata = file.metadata().await.unwrap();
+        let content_length = metadata.len();
 
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\n\r\n",
-            mime_type
+            "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            mime_type, content_length
         );
 
         socket.write_all(response.as_bytes()).await.unwrap();
 
+        let mut buffer = [0; 8192];
         loop {
             let n = file.read(&mut buffer).await.unwrap();
             if n == 0 {

@@ -42,9 +42,23 @@ pub async fn process(
             .content_type("")
             .content_length(0);
 
-        let stream = UnixStream::connect(php_fpm_socket_path.clone()).await.unwrap();
+        let stream = match UnixStream::connect(php_fpm_socket_path.clone()).await {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Failed to connect to PHP-FPM socket: {:?}", e);
+                return ();
+            }
+        };
+
         let client = Client::new(stream);
-        let response = client.execute_once(Request::new(params, &mut io::empty())).await.unwrap();
+        let response = match client.execute_once(Request::new(params, &mut io::empty())).await {
+            Ok(res) => res,
+            Err(e) => {
+                eprintln!("Failed to execute request: {:?}", e);
+                return ();
+            }
+        };
+
 
         if let Some(stdout) = response.stdout {
             let (headers, body) = http::fastcgi::parse_fastcgi_response(stdout);
