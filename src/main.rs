@@ -31,7 +31,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = TcpListener::bind(addr).await?;
 
     loop {
-        let (mut socket, addr) = listener.accept().await?;
+        let (socket, addr) = listener.accept().await?;
         let base_path = cli.base_path.clone();
         let port = cli.port.clone();
         let socket_path = cli.socket_path.clone().to_string();
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             http::handler::process(
                 base_path,
                 socket_path,
-                &mut socket,
+                socket,
                 addr,
                 port,
             ).await;

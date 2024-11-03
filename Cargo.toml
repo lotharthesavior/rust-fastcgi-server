@@ -10,4 +10,5 @@ fastcgi-client = "0.9.0"
 tokio = { version = "1.40.0", features = ["full"] }
 mime_guess = "2.0.5"
 clap = { version = "4.0", features = ["derive"] }
-
+log = "0.4.22"
+anyhow = "1.0.92"

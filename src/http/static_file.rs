@@ -1,19 +1,25 @@
 use mime_guess::from_path;
 use tokio::fs::File;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncWriteExt, BufReader};
+use log::{error, info};
+use tokio::io;
 
 pub fn is_allowed_static_file(file_path: &str) -> bool {
     let allowed_extensions = vec![".css", ".js", ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".html"];
     allowed_extensions.iter().any(|ext| file_path.ends_with(ext))
 }
 
-pub async fn serve_static_file(file_path: &str, socket: &mut tokio::net::TcpStream) {
+pub async fn serve_static_file(file_path: &str, mut socket: tokio::net::TcpStream) {
     let file = match File::open(file_path).await {
         Ok(f) => f,
-        Err(_) => {
-            let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+        Err(e) => {
+            error!("Failed to open file {}: {:?}", file_path, e);
+            let response = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
             if let Err(e) = socket.write_all(response.as_bytes()).await {
                 eprintln!("Failed to send 404 response: {:?}", e);
+            }
+            if let Err(e) = socket.shutdown().await {
+                eprintln!("Failed to shutdown socket after 404 response: {:?}", e);
             }
             return;
         }
@@ -22,8 +28,11 @@ pub async fn serve_static_file(file_path: &str, socket: &mut tokio::net::TcpStre
     let mime_type = from_path(file_path).first_or_octet_stream();
     let content_length = match file.metadata().await {
         Ok(metadata) => metadata.len(),
-        Err(_) => {
-            eprintln!("Failed to read file metadata.");
+        Err(e) => {
+            error!("Failed to read metadata for file {}: {:?}", file_path, e);
+            if let Err(e) = socket.shutdown().await {
+                eprintln!("Failed to shutdown socket after metadata error: {:?}", e);
+            }
             return;
         }
     };
@@ -33,34 +42,28 @@ pub async fn serve_static_file(file_path: &str, socket: &mut tokio::net::TcpStre
         mime_type, content_length
     );
 
-    if socket.write_all(response.as_bytes()).await.is_err() {
-        eprintln!("Failed to send response headers.");
+    if let Err(e) = socket.write_all(response.as_bytes()).await {
+        error!("Failed to send response headers for file {}: {:?}", file_path, e);
+        if let Err(e) = socket.shutdown().await {
+            eprintln!("Failed to shutdown socket after header error: {:?}", e);
+        }
         return;
     }
 
-    let mut buffer = [0; 8192];
-    let mut file = file;
-    loop {
-        let n = match file.read(&mut buffer).await {
-            Ok(0) => break, // EOF reached
-            Ok(n) => n,
-            Err(e) => {
-                eprintln!("Error reading file: {:?}", e);
-                return;
-            }
-        };
-
-        if socket.write_all(&buffer[..n]).await.is_err() {
-            eprintln!("Failed to send file content.");
-            return;
-        }
+    let mut reader = BufReader::new(file);
+    if let Err(e) = io::copy(&mut reader, &mut socket).await {
+        error!("Failed to send file content: {:?}", e);
     }
 
-    if socket.flush().await.is_err() {
-        eprintln!("Failed to flush socket.");
+    if let Err(e) = socket.flush().await {
+        error!("Failed to flush socket: {:?}", e);
     }
 
-    let _ = socket.shutdown().await;
+    if let Err(e) = socket.shutdown().await {
+        error!("Failed to shutdown socket: {:?}", e);
+    }
+
+    info!("Successfully served static file: {}", file_path);
 }
 
 #[cfg(test)]
